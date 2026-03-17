@@ -441,10 +441,11 @@
 <!-- Firebase Status Toast -->
 <div id="sync-toast" style="position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 16px;font-size:12px;color:var(--text-dim);z-index:300;display:none;white-space:nowrap;"></div>
 
-<script type="module">
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+<!-- Firebase CDN (compat version — global scope, no module needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 
+<script>
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey:            "AIzaSyAf_5LNs7mvCqsEKm40XocxCytzd1WZQ50",
@@ -533,29 +534,25 @@ function showToast(msg) {
 const notConfigured = firebaseConfig.apiKey === 'REPLACE_API_KEY';
 
 if (notConfigured) {
-  // Fallback to localStorage until Firebase is configured
   const raw = localStorage.getItem('ledger_v2');
   if (raw) state = JSON.parse(raw);
   setSyncStatus('offline');
   document.getElementById('sync-label').textContent = 'Local only';
 } else {
-  const app = initializeApp(firebaseConfig);
-  const db  = getDatabase(app);
-  dbRef     = ref(db, 'ledger');
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  dbRef = db.ref('ledger');
 
-  // Listen for real-time changes from Firebase
-  onValue(dbRef, (snapshot) => {
+  dbRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data) {
-      // Ensure arrays exist even if Firebase omitted empty ones
       state = {
         ...data,
         bills: data.bills || [],
         transactions: data.transactions || [],
       };
     } else {
-      // First time — push defaults up
-      set(dbRef, state);
+      dbRef.set(state);
     }
     setSyncStatus('live');
     render();
@@ -568,7 +565,7 @@ function saveState() {
     return;
   }
   setSyncStatus('saving');
-  set(dbRef, state).then(() => {
+  dbRef.set(state).then(() => {
     setSyncStatus('live');
     showToast('✓ Synced');
   }).catch(() => setSyncStatus('offline'));
@@ -977,14 +974,6 @@ document.getElementById('tx-modal').addEventListener('click', function(e) {
 // Enter key on tx form
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && document.getElementById('tx-modal').classList.contains('open')) saveTransaction();
-});
-
-// ── EXPOSE FUNCTIONS TO GLOBAL SCOPE (required for onclick in module) ──
-Object.assign(window, {
-  showPage, openTxModal, closeTxModal, setType, saveTransaction,
-  toggleBill, deleteBill, toggleAddBill, addBill, deleteTx,
-  setBalance, confirmReset, closeResetModal, doReset,
-  toggleDashPeriod, toggleBillsPeriod,
 });
 
 render();
