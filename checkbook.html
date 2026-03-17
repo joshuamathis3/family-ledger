@@ -979,6 +979,14 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && document.getElementById('tx-modal').classList.contains('open')) saveTransaction();
 });
 
+// ── EXPOSE FUNCTIONS TO GLOBAL SCOPE (required for onclick in module) ──
+Object.assign(window, {
+  showPage, openTxModal, closeTxModal, setType, saveTransaction,
+  toggleBill, deleteBill, toggleAddBill, addBill, deleteTx,
+  setBalance, confirmReset, closeResetModal, doReset,
+  toggleDashPeriod, toggleBillsPeriod,
+});
+
 render();
 </script>
 </body>
