@@ -102,6 +102,21 @@
   .balance-amount.positive { color: var(--green); }
   .balance-amount.negative { color: var(--red); }
 
+  /* Period switcher */
+  .period-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .period-switch-btn {
+    background: var(--card); border: 2px solid var(--border);
+    border-radius: var(--radius); padding: 12px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    transition: all .2s; font-family: 'DM Sans', sans-serif;
+  }
+  .period-switch-btn.active { border-color: var(--accent); background: rgba(91,141,238,0.08); }
+  .period-switch-btn.soon { border-color: var(--warning); }
+  .period-switch-btn.soon .psb-who { color: var(--warning); }
+  .psb-who { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  .period-switch-btn.active .psb-who { color: var(--accent); }
+  .psb-date { font-size: 12px; color: var(--text-muted); font-family: 'DM Mono', monospace; }
+
   /* Paycheck inputs */
   .paycheck-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   .paycheck-card {
@@ -117,6 +132,13 @@
   }
   .paycheck-input:focus { border-color: var(--green); }
   .paycheck-input::placeholder { color: var(--text-muted); }
+
+  /* Bill date override */
+  .bill-date-btn { background: none; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 11px; padding: 1px 4px; margin-left: 3px;
+    opacity: 0.5; transition: opacity .2s; }
+  .bill-date-btn:hover { opacity: 1; color: var(--accent); }
+  .bill-due.overridden { color: var(--warning); }
 
   /* Safe to spend hero */
   .safe-card {
@@ -352,6 +374,25 @@
   </div>
 </div>
 
+<!-- Bill Date Override Modal -->
+<div class="modal-overlay" id="override-modal">
+  <div class="modal">
+    <div class="modal-title">📅 Override Due Date</div>
+    <p style="color:var(--text-dim);font-size:13px;margin-bottom:16px;line-height:1.6">
+      Set a temporary due day for <strong id="override-bill-name" style="color:var(--text)">—</strong> on the dashboard only. The Bills tab keeps the original date.
+    </p>
+    <div class="form-group">
+      <label class="form-label">Pay on day of month</label>
+      <input class="form-input" id="override-day-input" type="number" min="1" max="31" placeholder="e.g. 18">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="clearOverride()">Clear Override</button>
+      <button class="btn btn-ghost" onclick="closeOverrideModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveOverride()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Pages -->
 <div id="page-dashboard" class="page active">
 
@@ -365,22 +406,22 @@
     </div>
   </div>
 
-  <!-- Paycheck Inputs -->
-  <div class="paycheck-grid">
-    <div class="paycheck-card">
-      <div class="paycheck-label">💰 Josh's Check</div>
-      <div class="paycheck-input-row">
-        <input class="paycheck-input" id="josh-check" type="number" step="0.01" placeholder="0.00"
-          oninput="updatePaychecks()" value="">
-      </div>
-    </div>
-    <div class="paycheck-card">
-      <div class="paycheck-label">💰 Kristin's Check</div>
-      <div class="paycheck-input-row">
-        <input class="paycheck-input" id="kristin-check" type="number" step="0.01" placeholder="0.00"
-          oninput="updatePaychecks()" value="">
-      </div>
-    </div>
+  <!-- Period Toggle -->
+  <div class="period-switcher">
+    <button class="period-switch-btn active" id="period-btn-0" onclick="switchPeriod(0)">
+      <span class="psb-who" id="period-who-0">—</span>
+      <span class="psb-date" id="period-date-0">—</span>
+    </button>
+    <button class="period-switch-btn" id="period-btn-1" onclick="switchPeriod(1)">
+      <span class="psb-who" id="period-who-1">—</span>
+      <span class="psb-date" id="period-date-1">—</span>
+    </button>
+  </div>
+
+  <!-- Paycheck Input for active period -->
+  <div class="paycheck-card" style="margin-bottom:12px">
+    <div class="paycheck-label" id="paycheck-card-label">💰 Paycheck</div>
+    <input class="paycheck-input" id="active-check" type="number" step="0.01" placeholder="0.00" oninput="updateActiveCheck()">
   </div>
 
   <!-- Stats Row -->
@@ -405,7 +446,7 @@
 
   <!-- Bills This Period -->
   <div class="section-header">
-    <div class="section-title">Bills This Period</div>
+    <div class="section-title" id="dash-bills-title">Bills This Period</div>
     <div class="section-badge warn" id="unpaid-count">0 left</div>
   </div>
   <div id="dashboard-bills-list"></div>
@@ -751,71 +792,124 @@ function render() {
 }
 
 // ── PAYDAY LOGIC ───────────────────────────────────────────────────────
-// Kristin: biweekly, anchor payday = Mar 27 2026
-const KRISTIN_ANCHOR = new Date(2026, 2, 27); // month is 0-indexed
-const BIWEEKLY_MS = 14 * 24 * 60 * 60 * 1000;
+const KRISTIN_ANCHOR = new Date(2026, 2, 26); // Mar 26 2026
+const BIWEEKLY_MS    = 14 * 24 * 60 * 60 * 1000;
 
 function nextKristinPayday(from) {
   let d = new Date(KRISTIN_ANCHOR);
-  // step forward until d > from
   while (d <= from) d = new Date(d.getTime() + BIWEEKLY_MS);
-  // step back until d is the first payday after from
   while (new Date(d.getTime() - BIWEEKLY_MS) > from) d = new Date(d.getTime() - BIWEEKLY_MS);
   return d;
 }
-
 function nextJoshPayday(from) {
   const m = from.getMonth(), y = from.getFullYear();
-  const d5  = new Date(y, m, 5);
-  const d20 = new Date(y, m, 20);
-  const d5next  = new Date(y, m + 1, 5);
-  const candidates = [d5, d20, d5next].filter(d => d > from);
+  const candidates = [new Date(y,m,5), new Date(y,m,20), new Date(y,m+1,5)].filter(d => d > from);
   return candidates.sort((a,b) => a-b)[0];
 }
-
-function getNextPayday() {
+function getNextTwoPaydays() {
   const now = new Date();
-  const k = nextKristinPayday(now);
-  const j = nextJoshPayday(now);
-  return k < j ? { date: k, who: 'Kristin' } : { date: j, who: 'Josh' };
+  const k = { date: nextKristinPayday(now), who: 'Kristin', checkKey: 'kristinCheck' };
+  const j = { date: nextJoshPayday(now),    who: 'Josh',    checkKey: 'joshCheck'    };
+  return [k,j].sort((a,b) => a.date - b.date);
+}
+// keep for renderBills compat
+function getNextPayday() {
+  return getNextTwoPaydays()[0];
 }
 
-function updatePaychecks() {
-  state.joshCheck    = parseFloat(document.getElementById('josh-check').value)    || 0;
-  state.kristinCheck = parseFloat(document.getElementById('kristin-check').value) || 0;
-  saveState();
+// ── PERIOD SWITCHING ───────────────────────────────────────────────────
+let activePeriod = 0;
+function switchPeriod(idx) {
+  activePeriod = idx;
   renderDashboard();
 }
 
-function renderDashboard() {
-  const nextPay    = getNextPayday();
-  const payDateStr = nextPay.date.toLocaleDateString('en-US', { month:'short', day:'numeric' });
-  const today      = new Date();
+// ── BILL DATE OVERRIDES ────────────────────────────────────────────────
+let overrideBillId = null;
+function openOverrideModal(id) {
+  overrideBillId = id;
+  const bill = (state.bills || []).find(b => b.id === id);
+  if (!bill) return;
+  document.getElementById('override-bill-name').textContent = bill.name;
+  const existing = (state.dateOverrides || {})[id];
+  document.getElementById('override-day-input').value = existing || bill.due || '';
+  document.getElementById('override-modal').classList.add('open');
+}
+function closeOverrideModal() {
+  document.getElementById('override-modal').classList.remove('open');
+  overrideBillId = null;
+}
+function saveOverride() {
+  const day = parseInt(document.getElementById('override-day-input').value);
+  if (!overrideBillId || isNaN(day) || day < 1 || day > 31) return;
+  if (!state.dateOverrides) state.dateOverrides = {};
+  state.dateOverrides[overrideBillId] = day;
+  saveState(); closeOverrideModal(); renderDashboard();
+}
+function clearOverride() {
+  if (!overrideBillId) return;
+  if (state.dateOverrides) delete state.dateOverrides[overrideBillId];
+  saveState(); closeOverrideModal(); renderDashboard();
+}
+function effectiveDue(bill) {
+  return (state.dateOverrides || {})[bill.id] ?? bill.due;
+}
 
-  // Bills due in current period (today → next payday)
+// ── PAYCHECK INPUT ─────────────────────────────────────────────────────
+function updateActiveCheck() {
+  const paydays = getNextTwoPaydays();
+  const key = paydays[activePeriod].checkKey;
+  state[key] = parseFloat(document.getElementById('active-check').value) || 0;
+  saveState(); renderDashboard();
+}
+function updatePaychecks() { updateActiveCheck(); }
+
+function renderDashboard() {
+  const today   = new Date();
+  const paydays = getNextTwoPaydays();
+  const oneDay  = 24 * 60 * 60 * 1000;
+
+  // Auto-switch if within 1 day of first payday
+  if ((paydays[0].date - today) <= oneDay && activePeriod === 0) activePeriod = 1;
+
+  // Update toggle buttons
+  paydays.forEach((p, i) => {
+    const soon = (p.date - today) <= oneDay && (p.date - today) > 0;
+    document.getElementById(`period-who-${i}`).textContent  = p.who + "'s Check";
+    document.getElementById(`period-date-${i}`).textContent =
+      p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    document.getElementById(`period-btn-${i}`).classList.toggle('active', i === activePeriod);
+    document.getElementById(`period-btn-${i}`).classList.toggle('soon', soon && i !== activePeriod);
+  });
+
+  const ap      = paydays[activePeriod];
+  const prevCut = activePeriod === 0 ? today : paydays[0].date;
+
+  // Bills for active period using effective due dates
   const periodBills = (state.bills || []).filter(b => {
     if (b.paid) return false;
-    if (!b.due) return true;
-    if (nextPay.date.getMonth() === today.getMonth() && nextPay.date.getFullYear() === today.getFullYear()) {
-      return b.due >= today.getDate() && b.due <= nextPay.date.getDate();
-    }
-    return true;
+    const due = effectiveDue(b);
+    if (!due) return true;
+    const sameMonth = ap.date.getMonth() === today.getMonth() && ap.date.getFullYear() === today.getFullYear();
+    return sameMonth
+      ? due >= prevCut.getDate() && due <= ap.date.getDate()
+      : true;
   });
 
   const billsTotal = periodBills.reduce((s,b) => s + b.amount, 0);
   const miscTotal  = (state.transactions || []).reduce((s,t) => s + t.amount, 0);
-  const josh       = state.joshCheck    || 0;
-  const kristin    = state.kristinCheck || 0;
-  const safe       = state.balance + josh + kristin - billsTotal - miscTotal;
+  const check      = state[ap.checkKey] || 0;
+  const safe       = state.balance + check - billsTotal - miscTotal;
 
-  // Hero balance
+  // Hero
   const heroEl = document.getElementById('hero-balance');
-  heroEl.textContent  = money(state.balance);
-  heroEl.className    = 'balance-amount ' + (state.balance >= 0 ? 'positive' : 'negative');
+  heroEl.textContent = money(state.balance);
+  heroEl.className   = 'balance-amount ' + (state.balance >= 0 ? 'positive' : 'negative');
 
-  // Paycheck inputs (restore saved values)
-  if (josh)    document.getElementById('josh-check').value    = josh;
-  if (kristin) document.getElementById('kristin-check').value = kristin;
+  // Paycheck card
+  document.getElementById('paycheck-card-label').textContent =
+    `💰 ${ap.who}'s Check — ${ap.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+  document.getElementById('active-check').value = check || '';
 
   // Stats
   document.getElementById('stat-bills-remaining').textContent = money(billsTotal);
@@ -825,34 +919,44 @@ function renderDashboard() {
   const safeEl = document.getElementById('stat-safe');
   safeEl.textContent = (safe < 0 ? '-' : '') + money(safe);
   safeEl.className   = 'safe-amount ' + (safe > 500 ? 'positive' : safe > 0 ? 'warn' : 'danger');
-  document.getElementById('next-payday-label').textContent = `until ${nextPay.who}'s payday (${payDateStr})`;
+  document.getElementById('next-payday-label').textContent =
+    `until ${ap.who}'s payday (${ap.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})})`;
 
   // Breakdown
-  const bd = document.getElementById('safe-breakdown');
-  bd.innerHTML = `
+  document.getElementById('safe-breakdown').innerHTML = `
     <span class="pos">+${money(state.balance)}</span> balance
-    ${josh    ? `&nbsp;+&nbsp;<span class="pos">${money(josh)}</span> Josh`    : ''}
-    ${kristin ? `&nbsp;+&nbsp;<span class="pos">${money(kristin)}</span> Kristin` : ''}
-    ${billsTotal ? `&nbsp;−&nbsp;<span class="neg">${money(billsTotal)}</span> bills` : ''}
-    ${miscTotal  ? `&nbsp;−&nbsp;<span class="neg">${money(miscTotal)}</span> misc`   : ''}
+    ${check      ? `&nbsp;+&nbsp;<span class="pos">${money(check)}</span> ${ap.who}`   : ''}
+    ${billsTotal ? `&nbsp;−&nbsp;<span class="neg">${money(billsTotal)}</span> bills`   : ''}
+    ${miscTotal  ? `&nbsp;−&nbsp;<span class="neg">${money(miscTotal)}</span> misc`     : ''}
   `;
 
-  // Unpaid count badge
-  document.getElementById('unpaid-count').textContent = periodBills.length + ' left';
-
   // Bills list
-  const billList = document.getElementById('dashboard-bills-list');
-  if (periodBills.length === 0) {
-    billList.innerHTML = '<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">No bills due this period!</div></div>';
-  } else {
-    billList.innerHTML = periodBills.map(b => billHTML(b, false)).join('');
-  }
+  document.getElementById('dash-bills-title').textContent = `Bills — ${ap.who}'s Period`;
+  document.getElementById('unpaid-count').textContent = periodBills.length + ' left';
+  document.getElementById('dashboard-bills-list').innerHTML = periodBills.length
+    ? periodBills.map(b => dashBillHTML(b)).join('')
+    : '<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">No bills due this period!</div></div>';
 
-  // Misc transactions list
-  const txList = document.getElementById('dashboard-tx-list');
-  const txs = (state.transactions || []);
-  txList.innerHTML = txs.length ? txs.map(t => txHTML(t)).join('') :
-    '<div class="empty"><div class="empty-icon">📒</div><div class="empty-text">No misc expenses yet.</div></div>';
+  // Misc
+  const txs = state.transactions || [];
+  document.getElementById('dashboard-tx-list').innerHTML = txs.length
+    ? txs.map(t => txHTML(t)).join('')
+    : '<div class="empty"><div class="empty-icon">📒</div><div class="empty-text">No misc expenses yet.</div></div>';
+}
+
+function dashBillHTML(b) {
+  const due    = effectiveDue(b);
+  const isOver = (state.dateOverrides || {})[b.id] !== undefined;
+  return `<div class="bill-item ${b.paid ? 'paid' : ''}">
+    <button class="bill-check" onclick="toggleBill('${b.id}')">${b.paid ? '✓' : ''}</button>
+    <div class="bill-info">
+      <div class="bill-name">${b.name}</div>
+      <div class="bill-due ${isOver ? 'overridden' : ''}">Due: ${due ? 'the ' + ordinal(due) : '—'}
+        <button class="bill-date-btn" onclick="openOverrideModal('${b.id}')" title="Change date">✏️</button>
+      </div>
+    </div>
+    <div class="bill-amount">${money(b.amount)}</div>
+  </div>`;
 }
 
 let billsPeriodOnly = true;
@@ -878,21 +982,18 @@ function renderBills() {
   if (billsPeriodOnly) {
     display = display.filter(b => {
       if (!b.due) return true;
-      if (nextPay.date.getMonth() === now.getMonth() && nextPay.date.getFullYear() === now.getFullYear()) {
-        return b.due >= now.getDate() && b.due <= nextPay.date.getDate();
-      }
-      return true;
+      const sameMonth = nextPay.date.getMonth() === now.getMonth() && nextPay.date.getFullYear() === now.getFullYear();
+      return sameMonth ? b.due >= now.getDate() && b.due <= nextPay.date.getDate() : true;
     });
   }
 
   const unpaid = display.filter(b => !b.paid);
   const paid   = display.filter(b => b.paid);
-  const sorted = [...unpaid, ...paid];
-
   const container = document.getElementById('bills-list');
-  container.innerHTML = sorted.map(b => billHTML(b, true, true)).join('');
+  container.innerHTML = [...unpaid, ...paid].map(b => billHTML(b, true, true)).join('');
   initDragDrop();
 }
+
 
 // ── DRAG AND DROP ──────────────────────────────────────────────────────
 let dragSrcId = null;
@@ -1042,6 +1143,9 @@ function ordinal(n) {
 }
 
 // Close modals on overlay click
+document.getElementById('override-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeOverrideModal();
+});
 document.getElementById('reset-modal').addEventListener('click', function(e) {
   if (e.target === this) closeResetModal();
 });
@@ -1058,7 +1162,8 @@ Object.assign(window, {
   showPage, openTxModal, closeTxModal, saveTransaction,
   toggleBill, deleteBill, toggleAddBill, addBill, deleteTx,
   setBalance, confirmReset, closeResetModal, doReset,
-  toggleBillsPeriod, updatePaychecks,
+  toggleBillsPeriod, updateActiveCheck, updatePaychecks,
+  switchPeriod, openOverrideModal, closeOverrideModal, saveOverride, clearOverride,
 });
 
 render();
