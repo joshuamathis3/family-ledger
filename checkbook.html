@@ -926,7 +926,8 @@ function renderDashboard() {
   const pay1Day  = pay1.date.getDate();
   const pay2Day  = pay2.date.getDate();
 
-  // Auto-switch to period 1 if within 1 day of first payday
+  // Only auto-switch to period 1 if we're within 1 day of pay1 AND user hasn't manually toggled
+  if ((pay1.date - today) > oneDay && activePeriod === 1) activePeriod = 0;
   if ((pay1.date - today) <= oneDay && activePeriod === 0) activePeriod = 1;
 
   // Update toggle buttons
@@ -942,26 +943,27 @@ function renderDashboard() {
   const allBills = (state.bills || []).filter(b => !b.paid);
   const allTxs   = state.transactions || [];
 
-  // Bills due BEFORE pay1 (today → pay1 day, exclusive of pay1 itself)
+  // Bills due strictly between today and pay1 (not yet passed, not on payday itself)
+  // Safe Now = what comes out BEFORE the paycheck hits
   const billsBeforePay1 = allBills.filter(b => {
     const due = effectiveDue(b);
-    if (!due) return false; // no date = don't assume
-    return due < pay1Day;
+    if (!due) return false;
+    return due > todayDay && due < pay1Day;
   });
 
-  // Bills due ON or AFTER pay1 up to pay2 (the "after payday" period)
+  // Bills due on pay1 day through pay2 day (the window after pay1 lands)
   const billsBetweenPaydays = allBills.filter(b => {
     const due = effectiveDue(b);
     if (!due) return false;
     return due >= pay1Day && due <= pay2Day;
   });
 
-  // Misc expenses due before pay1
-  const miscBeforePay1 = allTxs.filter(t => t.day && t.day < pay1Day);
-  // Misc expenses due between pay1 and pay2
+  // Misc due strictly between today and pay1
+  const miscBeforePay1     = allTxs.filter(t => t.day && t.day > todayDay && t.day < pay1Day);
+  // Misc due on pay1 through pay2
   const miscBetweenPaydays = allTxs.filter(t => t.day && t.day >= pay1Day && t.day <= pay2Day);
-  // Misc with no date — count in safe now as a conservative estimate
-  const miscNoDate = allTxs.filter(t => !t.day);
+  // Misc with no date — conservative: count in safe now
+  const miscNoDate         = allTxs.filter(t => !t.day);
 
   const billsBefore1Total    = billsBeforePay1.reduce((s,b) => s + b.amount, 0);
   const billsBetweenTotal    = billsBetweenPaydays.reduce((s,b) => s + b.amount, 0);
