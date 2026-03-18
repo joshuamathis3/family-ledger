@@ -918,11 +918,16 @@ function updatePaychecks() { updateActiveCheck(); }
 
 function renderDashboard() {
   const today   = new Date();
-  const paydays = getNextTwoPaydays();
-  const oneDay  = 24 * 60 * 60 * 1000;
+  const todayDay = today.getDate();
+  const paydays  = getNextTwoPaydays();
+  const oneDay   = 24 * 60 * 60 * 1000;
+  const pay1     = paydays[0]; // soonest payday (e.g. Josh Mar 20)
+  const pay2     = paydays[1]; // second payday (e.g. Kristin Mar 26)
+  const pay1Day  = pay1.date.getDate();
+  const pay2Day  = pay2.date.getDate();
 
-  // Auto-switch if within 1 day of first payday
-  if ((paydays[0].date - today) <= oneDay && activePeriod === 0) activePeriod = 1;
+  // Auto-switch to period 1 if within 1 day of first payday
+  if ((pay1.date - today) <= oneDay && activePeriod === 0) activePeriod = 1;
 
   // Update toggle buttons
   paydays.forEach((p, i) => {
@@ -934,42 +939,57 @@ function renderDashboard() {
     document.getElementById(`period-btn-${i}`).classList.toggle('soon', soon && i !== activePeriod);
   });
 
-  const ap      = paydays[activePeriod];
-  const prevCut = activePeriod === 0 ? today : paydays[0].date;
+  const allBills = (state.bills || []).filter(b => !b.paid);
+  const allTxs   = state.transactions || [];
 
-  // Bills for active period using effective due dates
-  const periodBills = (state.bills || []).filter(b => {
-    if (b.paid) return false;
+  // Bills due BEFORE pay1 (today → pay1 day, exclusive of pay1 itself)
+  const billsBeforePay1 = allBills.filter(b => {
     const due = effectiveDue(b);
-    if (!due) return true;
-    const sameMonth = ap.date.getMonth() === today.getMonth() && ap.date.getFullYear() === today.getFullYear();
-    return sameMonth
-      ? due >= prevCut.getDate() && due <= ap.date.getDate()
-      : true;
+    if (!due) return false; // no date = don't assume
+    return due < pay1Day;
   });
 
-  const billsTotal = periodBills.reduce((s,b) => s + b.amount, 0);
-  const allTxs     = state.transactions || [];
-  const check      = state[ap.checkKey] || 0;
+  // Bills due ON or AFTER pay1 up to pay2 (the "after payday" period)
+  const billsBetweenPaydays = allBills.filter(b => {
+    const due = effectiveDue(b);
+    if (!due) return false;
+    return due >= pay1Day && due <= pay2Day;
+  });
 
-  // Misc expenses due before payday (day <= payday day, or no day = always counts)
-  const miscNow   = allTxs.filter(t => !t.day || t.day <= ap.date.getDate());
-  const miscAfter = allTxs; // all misc after payday
-  const miscNowTotal   = miscNow.reduce((s,t)   => s + t.amount, 0);
-  const miscAfterTotal = miscAfter.reduce((s,t) => s + t.amount, 0);
-  const miscTotal = miscNowTotal; // for stats display
+  // Misc expenses due before pay1
+  const miscBeforePay1 = allTxs.filter(t => t.day && t.day < pay1Day);
+  // Misc expenses due between pay1 and pay2
+  const miscBetweenPaydays = allTxs.filter(t => t.day && t.day >= pay1Day && t.day <= pay2Day);
+  // Misc with no date — count in safe now as a conservative estimate
+  const miscNoDate = allTxs.filter(t => !t.day);
 
-  // SAFE NOW  = balance − bills this period − misc due before payday
-  const safeNow   = state.balance - billsTotal - miscNowTotal;
-  // SAFE AFTER = balance + paycheck − bills this period − ALL misc
-  const safeAfter = state.balance + check - billsTotal - miscAfterTotal;
+  const billsBefore1Total    = billsBeforePay1.reduce((s,b) => s + b.amount, 0);
+  const billsBetweenTotal    = billsBetweenPaydays.reduce((s,b) => s + b.amount, 0);
+  const miscBefore1Total     = miscBeforePay1.reduce((s,t) => s + t.amount, 0) + miscNoDate.reduce((s,t) => s + t.amount, 0);
+  const miscBetweenTotal     = miscBetweenPaydays.reduce((s,t) => s + t.amount, 0);
+
+  const check1 = state[pay1.checkKey] || 0;
+  const check2 = state[pay2.checkKey] || 0;
+
+  // SAFE NOW = balance − bills due before pay1 − misc due before pay1
+  const safeNow = state.balance - billsBefore1Total - miscBefore1Total;
+
+  // AFTER PAY1 = safeNow + pay1 check − bills between pay1 and pay2 − misc between
+  const safeAfter = safeNow + check1 - billsBetweenTotal - miscBetweenTotal;
+
+  // Which period is active for the bills list display
+  const ap           = paydays[activePeriod];
+  const displayBills = activePeriod === 0 ? billsBeforePay1 : billsBetweenPaydays;
+  const check        = activePeriod === 0 ? check1 : check2;
+  const billsTotal   = displayBills.reduce((s,b) => s + b.amount, 0);
+  const miscTotal    = activePeriod === 0 ? miscBefore1Total : miscBetweenTotal;
 
   // Hero
   const heroEl = document.getElementById('hero-balance');
   heroEl.textContent = money(state.balance);
   heroEl.className   = 'balance-amount ' + (state.balance >= 0 ? 'positive' : 'negative');
 
-  // Paycheck card
+  // Paycheck card — shows the active period's check
   document.getElementById('paycheck-card-label').textContent =
     `💰 ${ap.who}'s Check — ${ap.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
   document.getElementById('active-check').value = check || '';
@@ -983,24 +1003,29 @@ function renderDashboard() {
   safeNowEl.textContent = (safeNow < 0 ? '-' : '') + money(safeNow);
   safeNowEl.className   = 'safe-amount ' + (safeNow > 500 ? 'positive' : safeNow > 0 ? 'warn' : 'danger');
   document.getElementById('safe-now-label').textContent =
-    `Until ${ap.who}'s payday (${ap.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})})`;
+    `Until ${pay1.who}'s payday (${pay1.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})})`;
   document.getElementById('safe-now-breakdown').innerHTML =
-    `<span class="pos">+${money(state.balance)}</span>${billsTotal ? ` −<span class="neg">${money(billsTotal)}</span> bills` : ''}${miscNowTotal ? ` −<span class="neg">${money(miscNowTotal)}</span> misc` : ''}`;
+    `<span class="pos">+${money(state.balance)}</span>`
+    + (billsBefore1Total ? ` −<span class="neg">${money(billsBefore1Total)}</span> bills` : '')
+    + (miscBefore1Total  ? ` −<span class="neg">${money(miscBefore1Total)}</span> misc`   : '');
 
   // Safe AFTER
   const safeAfterEl = document.getElementById('stat-safe-after');
   safeAfterEl.textContent = (safeAfter < 0 ? '-' : '') + money(safeAfter);
   safeAfterEl.className   = 'safe-amount ' + (safeAfter > 500 ? 'positive' : safeAfter > 0 ? 'warn' : 'danger');
   document.getElementById('safe-after-label').textContent =
-    `After ${ap.who}'s check clears`;
+    `After ${pay1.who}'s check + until ${pay2.who}'s payday`;
   document.getElementById('safe-after-breakdown').innerHTML =
-    `<span class="pos">+${money(state.balance)}</span>${check ? ` +<span class="pos">${money(check)}</span>` : ''} −<span class="neg">${money(billsTotal + miscAfterTotal)}</span>`;
+    `<span class="pos">+${money(safeNow)}</span>`
+    + (check1           ? ` +<span class="pos">${money(check1)}</span> ${pay1.who}` : '')
+    + (billsBetweenTotal ? ` −<span class="neg">${money(billsBetweenTotal)}</span> bills` : '')
+    + (miscBetweenTotal  ? ` −<span class="neg">${money(miscBetweenTotal)}</span> misc`   : '');
 
   // Bills list
   document.getElementById('dash-bills-title').textContent = `Bills — ${ap.who}'s Period`;
-  document.getElementById('unpaid-count').textContent = periodBills.length + ' left';
-  document.getElementById('dashboard-bills-list').innerHTML = periodBills.length
-    ? periodBills.map(b => dashBillHTML(b)).join('')
+  document.getElementById('unpaid-count').textContent = displayBills.length + ' left';
+  document.getElementById('dashboard-bills-list').innerHTML = displayBills.length
+    ? displayBills.map(b => dashBillHTML(b)).join('')
     : '<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">No bills due this period!</div></div>';
 
   // Misc
