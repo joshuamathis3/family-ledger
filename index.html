@@ -27,19 +27,13 @@
   .auth-sub { font-size:13px; color:rgba(255,255,255,0.45); margin-bottom:36px; letter-spacing:0.3px; }
   .auth-card { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:28px 24px; width:100%; max-width:360px; }
   .auth-label { font-size:11px; font-weight:700; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; display:block; }
-  .auth-input { width:100%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); color:#fff; padding:12px 14px; border-radius:var(--radius-sm); font-family:'DM Mono',monospace; font-size:16px; outline:none; margin-bottom:14px; transition:border-color .2s; }
-  .auth-input:focus { border-color:#6fcf7f; }
-  .auth-input::placeholder { color:rgba(255,255,255,0.25); }
   .auth-btn { width:100%; background:#2d7a3a; border:none; color:#fff; padding:13px; border-radius:var(--radius-sm); font-family:'DM Sans',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:background .2s; }
   .auth-btn:hover { background:#3a9e4a; }
   .auth-btn:disabled { background:rgba(255,255,255,0.15); color:rgba(255,255,255,0.4); cursor:not-allowed; }
-  .auth-step { display:none; }
-  .auth-step.active { display:block; }
-  .auth-back { background:none; border:none; color:rgba(255,255,255,0.4); font-size:13px; cursor:pointer; margin-top:12px; width:100%; text-align:center; padding:6px; font-family:'DM Sans',sans-serif; transition:color .2s; }
-  .auth-back:hover { color:rgba(255,255,255,0.75); }
   .auth-msg { font-size:12px; color:#ef9a9a; margin-bottom:12px; min-height:16px; text-align:center; }
   .auth-msg.ok { color:#6fcf7f; }
-  #recaptcha-container { margin-bottom:14px; }
+  .google-btn { display:flex; align-items:center; justify-content:center; background:#fff; color:#1a2e1a; font-weight:700; }
+  .google-btn:hover { background:#f0f0f0; }
 
   /* APP SHELL */
   #app-shell { display:none; }
@@ -134,20 +128,11 @@
   <div class="auth-logo">Family <span>Budget</span></div>
   <div class="auth-sub">Sign in to sync with Kristin 🌿</div>
   <div class="auth-card">
-    <div class="auth-step active" id="auth-step-phone">
-      <label class="auth-label">Your Phone Number</label>
-      <input class="auth-input" id="auth-phone" type="tel" placeholder="+1 701 555 0100" autocomplete="tel">
-      <div class="auth-msg" id="auth-msg-phone"></div>
-      <div id="recaptcha-container"></div>
-      <button class="auth-btn" id="auth-send-btn" onclick="sendCode()">Send Code via SMS</button>
-    </div>
-    <div class="auth-step" id="auth-step-code">
-      <label class="auth-label">Enter the 6-digit code</label>
-      <input class="auth-input" id="auth-code" type="number" placeholder="123456" autocomplete="one-time-code">
-      <div class="auth-msg" id="auth-msg-code"></div>
-      <button class="auth-btn" id="auth-verify-btn" onclick="verifyCode()">Verify &amp; Sign In</button>
-      <button class="auth-back" onclick="backToPhone()">← Use a different number</button>
-    </div>
+    <div class="auth-msg" id="auth-msg-google"></div>
+    <button class="auth-btn google-btn" id="auth-google-btn" onclick="signInWithGoogle()">
+      <svg width="18" height="18" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:10px;flex-shrink:0"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 32.6 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.7 6.5 29.1 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-8.9 20-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.1 18.9 12 24 12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.7 6.5 29.1 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5 0 9.5-1.7 13-4.5l-6-5.2C29.2 35.8 26.7 36 24 36c-5.3 0-9.7-3.5-11.3-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6 5.2C41 35.7 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
+      Continue with Google
+    </button>
   </div>
 </div>
 
@@ -317,71 +302,34 @@ const auth = firebase.auth();
 const db = firebase.database();
 
 let dbRef = null, state = null, activePeriod = 0;
-let confirmationResult = null, recaptchaVerifier = null;
 
 // ── AUTH ──
 function showAuthScreen() {
   document.getElementById('auth-screen').classList.remove('hidden');
   document.getElementById('app-shell').classList.remove('visible');
-  initRecaptcha();
 }
 function showApp() {
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('app-shell').classList.add('visible');
 }
-function initRecaptcha() {
-  if (recaptchaVerifier) return;
-  recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
-    size: 'normal',
-    callback: () => { document.getElementById('auth-send-btn').disabled = false; },
-    'expired-callback': () => { document.getElementById('auth-send-btn').disabled = true; }
-  });
-  recaptchaVerifier.render();
-  document.getElementById('auth-send-btn').disabled = true;
-}
-function setAuthMsg(step, msg, isOk=false) {
-  const el = document.getElementById('auth-msg-'+step);
+function setAuthMsg(msg, isOk=false) {
+  const el = document.getElementById('auth-msg-google');
   el.textContent = msg;
   el.className = 'auth-msg' + (isOk ? ' ok' : '');
 }
-async function sendCode() {
-  const raw = document.getElementById('auth-phone').value.trim();
-  if (!raw) { setAuthMsg('phone','Enter your phone number first.'); return; }
-  const phone = raw.startsWith('+') ? raw : '+1'+raw.replace(/\D/g,'');
-  const btn = document.getElementById('auth-send-btn');
-  btn.disabled = true; btn.textContent = 'Sending...'; setAuthMsg('phone','');
+async function signInWithGoogle() {
+  const btn = document.getElementById('auth-google-btn');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  setAuthMsg('');
   try {
-    confirmationResult = await auth.signInWithPhoneNumber(phone, recaptchaVerifier);
-    document.getElementById('auth-step-phone').classList.remove('active');
-    document.getElementById('auth-step-code').classList.add('active');
-    setAuthMsg('code','Code sent! Check your texts. 📱', true);
-    document.getElementById('auth-code').focus();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await auth.signInWithPopup(provider);
+    // onAuthStateChanged handles the rest
   } catch(err) {
-    setAuthMsg('phone', err.message || 'Failed to send code.');
-    btn.disabled = false; btn.textContent = 'Send Code via SMS';
-    recaptchaVerifier.clear(); recaptchaVerifier = null; initRecaptcha();
+    setAuthMsg(err.code === 'auth/popup-closed-by-user' ? 'Window closed — try again.' : (err.message || 'Sign-in failed.'));
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:10px;flex-shrink:0"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 32.6 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.7 6.5 29.1 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-8.9 20-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.1 18.9 12 24 12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.7 6.5 29.1 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5 0 9.5-1.7 13-4.5l-6-5.2C29.2 35.8 26.7 36 24 36c-5.3 0-9.7-3.5-11.3-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6 5.2C41 35.7 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>Continue with Google';
   }
-}
-async function verifyCode() {
-  const code = document.getElementById('auth-code').value.trim();
-  if (!code || code.length < 6) { setAuthMsg('code','Enter the 6-digit code.'); return; }
-  const btn = document.getElementById('auth-verify-btn');
-  btn.disabled = true; btn.textContent = 'Verifying...'; setAuthMsg('code','');
-  try {
-    await confirmationResult.confirm(code);
-  } catch(err) {
-    setAuthMsg('code','Wrong code — give it another shot.');
-    btn.disabled = false; btn.textContent = 'Verify & Sign In';
-  }
-}
-function backToPhone() {
-  document.getElementById('auth-step-code').classList.remove('active');
-  document.getElementById('auth-step-phone').classList.add('active');
-  document.getElementById('auth-send-btn').disabled = false;
-  document.getElementById('auth-send-btn').textContent = 'Send Code via SMS';
-  setAuthMsg('phone',''); confirmationResult = null;
-  if (recaptchaVerifier) { recaptchaVerifier.clear(); recaptchaVerifier = null; }
-  initRecaptcha();
 }
 function signOut() { auth.signOut(); }
 
@@ -622,7 +570,7 @@ function render(){renderDashboard();renderBills();}
 document.getElementById('tx-modal').addEventListener('click',function(e){if(e.target===this)closeTxModal();});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('tx-modal').classList.contains('open'))saveTransaction();});
 
-Object.assign(window,{showPage,shiftPeriod,jumpToCurrentPeriod,closeOutPeriod,updateActiveCheck,setBalance,toggleAddBill,addBill,toggleBill,toggleTx,updateBillDue,deleteBill,openTxModal,closeTxModal,saveTransaction,deleteTx,sendCode,verifyCode,backToPhone,signOut});
+Object.assign(window,{showPage,shiftPeriod,jumpToCurrentPeriod,closeOutPeriod,updateActiveCheck,setBalance,toggleAddBill,addBill,toggleBill,toggleTx,updateBillDue,deleteBill,openTxModal,closeTxModal,saveTransaction,deleteTx,signInWithGoogle,signOut});
 </script>
 </body>
 </html>
